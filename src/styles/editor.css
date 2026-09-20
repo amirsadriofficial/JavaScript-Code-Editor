@@ -1,0 +1,365 @@
+:root,
+[data-theme='dark'] {
+  --bg: #0f1419;
+  --bg-elevated: #171d25;
+  --bg-editor: #0b1015;
+  --border: #273140;
+  --text: #d7dee8;
+  --text-muted: #8b98a8;
+  --accent: #3d9cf0;
+  --accent-soft: rgba(61, 156, 240, 0.12);
+  --warn: #e0a857;
+  --error: #f44747;
+  --current-line: rgba(255, 255, 255, 0.04);
+  --selection: rgba(61, 156, 240, 0.28);
+  --ghost: rgba(215, 222, 232, 0.34);
+  --tok-keyword: #c792ea;
+  --tok-string: #c3e88d;
+  --tok-comment: #5f7480;
+  --tok-number: #f78c6c;
+  --tok-identifier: #82aaff;
+  --tok-punctuation: #89ddff;
+  --tok-plain: #d7dee8;
+  --line-num: #4a5868;
+  --line-num-current: #b8c4d4;
+  --shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+[data-theme='light'] {
+  --bg: #e8eef5;
+  --bg-elevated: #f7f9fc;
+  --bg-editor: #ffffff;
+  --border: #c9d4e3;
+  --text: #1c2733;
+  --text-muted: #5c6b7c;
+  --accent: #1565c0;
+  --accent-soft: rgba(21, 101, 192, 0.1);
+  --warn: #8a5a10;
+  --error: #d32f2f;
+  --current-line: rgba(21, 101, 192, 0.07);
+  --selection: rgba(21, 101, 192, 0.22);
+  --ghost: rgba(28, 39, 51, 0.38);
+  --tok-keyword: #7c3aed;
+  --tok-string: #2e7d32;
+  --tok-comment: #78909c;
+  --tok-number: #d84315;
+  --tok-identifier: #1565c0;
+  --tok-punctuation: #00838f;
+  --tok-plain: #1c2733;
+  --line-num: #90a0b2;
+  --line-num-current: #334155;
+  --shadow: 0 18px 40px rgba(28, 55, 90, 0.12);
+}
+
+/*
+ * The overlay technique depends on the textarea, the highlight layer and the
+ * ghost text laying glyphs out identically. Every property that affects glyph
+ * advance or line box height is declared once, here, for all three.
+ */
+.highlight-layer,
+.editor-input,
+.ghost-text {
+  font-family: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', monospace;
+  font-size: 14px;
+  font-variant-ligatures: none;
+  line-height: 22px;
+  letter-spacing: 0;
+  tab-size: 2;
+  white-space: pre;
+  overflow-wrap: normal;
+  word-break: normal;
+  border: 0;
+  margin: 0;
+}
+
+.highlight-layer,
+.editor-input {
+  padding: 16px;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: 'IBM Plex Sans', 'Segoe UI', system-ui, sans-serif;
+  background:
+    radial-gradient(1200px 600px at 10% -10%, var(--accent-soft), transparent),
+    linear-gradient(160deg, var(--bg), var(--bg-elevated));
+  color: var(--text);
+}
+
+.editor-app {
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 24px 20px 16px;
+}
+
+/* Toolbar ------------------------------------------------------------- */
+
+.toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 12px 16px;
+  background: color-mix(in srgb, var(--bg-elevated) 88%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+}
+
+.toolbar-brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.toolbar-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  background: var(--accent);
+  color: #fff;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.toolbar-brand h1 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.toolbar-brand p {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--text-muted);
+}
+
+.toolbar-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.toolbar-actions button {
+  appearance: none;
+  border: 1px solid var(--border);
+  background: var(--bg-editor);
+  color: var(--text);
+  border-radius: 8px;
+  padding: 7px 12px;
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.toolbar-actions button:hover:not(:disabled) {
+  border-color: var(--accent);
+}
+
+.toolbar-actions button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.toolbar-chip {
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 10px;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.toolbar-chip.is-warn {
+  color: var(--warn);
+  border-color: color-mix(in srgb, var(--warn) 45%, var(--border));
+}
+
+/* Editor -------------------------------------------------------------- */
+
+.editor-frame {
+  display: grid;
+  grid-template-columns: 56px minmax(0, 1fr);
+  min-height: 0;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--bg-editor);
+  box-shadow: var(--shadow);
+}
+
+.line-numbers {
+  overflow: hidden;
+  border-right: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg-elevated) 70%, var(--bg-editor));
+  padding: 16px 0;
+  user-select: none;
+}
+
+.line-number {
+  height: 22px;
+  line-height: 22px;
+  text-align: right;
+  padding-right: 12px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 13px;
+  color: var(--line-num);
+}
+
+.line-number.is-current {
+  color: var(--line-num-current);
+  font-weight: 600;
+}
+
+.editor-surface {
+  position: relative;
+  min-width: 0;
+  overflow: hidden;
+}
+
+/* Layers that are moved by the scroll handler rather than by scrolling. */
+.scroll-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  will-change: transform;
+}
+
+.current-line-band {
+  position: absolute;
+  left: 0;
+  width: 100%;
+  background: var(--current-line);
+}
+
+.highlight-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+  color: var(--tok-plain);
+  will-change: transform;
+}
+
+.code-line {
+  height: 22px;
+}
+
+.editor-input {
+  position: relative;
+  z-index: 2;
+  display: block;
+  width: 100%;
+  height: 100%;
+  resize: none;
+  background: transparent;
+  color: transparent;
+  caret-color: var(--accent);
+  outline: none;
+  overflow: auto;
+}
+
+.editor-input::selection {
+  background: var(--selection);
+}
+
+.ghost-text {
+  position: absolute;
+  z-index: 3;
+  pointer-events: none;
+  color: var(--ghost);
+}
+
+/* Token colours ------------------------------------------------------- */
+
+.tok-keyword {
+  color: var(--tok-keyword);
+}
+.tok-string {
+  color: var(--tok-string);
+}
+.tok-comment {
+  color: var(--tok-comment);
+  font-style: italic;
+}
+.tok-number {
+  color: var(--tok-number);
+}
+.tok-identifier {
+  color: var(--tok-identifier);
+}
+.tok-punctuation {
+  color: var(--tok-punctuation);
+}
+.tok-plain {
+  color: var(--tok-plain);
+}
+
+/* Squiggle under erroneous spans — same cue as VS Code / Monaco. */
+.tok-error {
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--error);
+  text-decoration-thickness: from-font;
+  text-underline-offset: 2px;
+}
+
+/* Empty line inside an error block still gets a visible mark. */
+.tok-error-empty {
+  display: inline-block;
+  min-width: 1.2ch;
+  text-decoration-line: underline;
+  text-decoration-style: wavy;
+  text-decoration-color: var(--error);
+  text-underline-offset: 2px;
+}
+
+/* Status -------------------------------------------------------------- */
+
+.editor-status {
+  display: flex;
+  gap: 16px;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: 12px;
+  color: var(--text-muted);
+  padding: 0 4px 4px;
+}
+
+.status-issue {
+  color: var(--error);
+}
+
+@media (max-width: 720px) {
+  .editor-app {
+    padding: 12px;
+  }
+
+  .toolbar {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+}

@@ -5,33 +5,43 @@ const caret = (offset: number) => ({ start: offset, end: offset })
 
 describe('applyAutoclose', () => {
   it('inserts the matching closer and sits between the pair', () => {
-    expect(applyAutoclose('', caret(0), '(')).toEqual({
+    const result = applyAutoclose('', caret(0), '(')
+
+    expect(result).toEqual({
       value: '()',
       selection: caret(1),
     })
   })
 
   it('wraps a selection instead of replacing it', () => {
-    expect(applyAutoclose('abc', { start: 0, end: 3 }, '"')).toEqual({
+    const result = applyAutoclose('abc', { start: 0, end: 3 }, '"')
+
+    expect(result).toEqual({
       value: '"abc"',
       selection: { start: 1, end: 4 },
     })
   })
 
   it('steps over a closer that is already there', () => {
-    expect(applyAutoclose('()', caret(1), ')')).toEqual({
+    const result = applyAutoclose('()', caret(1), ')')
+
+    expect(result).toEqual({
       value: '()',
       selection: caret(2),
     })
   })
 
   it('stays out of the way of an apostrophe inside a word', () => {
+    // Typing the apostrophe in "don't" must not insert a second quote.
     expect(applyAutoclose('don', caret(3), "'")).toBeNull()
+    // Opening quote right before a letter is also left alone.
     expect(applyAutoclose('xs', caret(0), "'")).toBeNull()
   })
 
   it('still pairs a quote that opens a string', () => {
-    expect(applyAutoclose('const a = ', caret(10), "'")).toEqual({
+    const result = applyAutoclose('const a = ', caret(10), "'")
+
+    expect(result).toEqual({
       value: "const a = ''",
       selection: caret(11),
     })
@@ -49,7 +59,9 @@ describe('applyAutoclose', () => {
 
 describe('applyPairBackspace', () => {
   it('removes both halves of an empty pair', () => {
-    expect(applyPairBackspace('()', caret(1))).toEqual({
+    const result = applyPairBackspace('()', caret(1))
+
+    expect(result).toEqual({
       value: '',
       selection: caret(0),
     })

@@ -1,34 +1,43 @@
 import { describe, expect, it } from 'vitest'
 import { analyze } from '../document'
 
+/** First issue whose message matches, or undefined. */
+function issueNamed(text: string, message: string) {
+  return analyze(text).issues.find((issue) => issue.message === message)
+}
+
 describe('findObviousIssues', () => {
   it('underlines an unterminated string for its whole span', () => {
-    const doc = analyze('const x = "hello')
-    const issue = doc.issues.find((i) => i.message === 'Unterminated string')
-    expect(issue).toMatchObject({
-      start: 'const x = '.length,
-      end: 'const x = "hello'.length,
-    })
+    const source = 'const x = "hello'
+    const issue = issueNamed(source, 'Unterminated string')
+
+    expect(issue).toBeDefined()
+    expect(issue!.start).toBe('const x = '.length)
+    expect(issue!.end).toBe(source.length)
   })
 
   it('underlines an unclosed block from the opener to EOF', () => {
-    const text = 'function f() {\n  return 1\n'
-    const doc = analyze(text)
-    const issue = doc.issues.find((i) => i.message === "Unclosed '{'")
-    expect(issue).toMatchObject({ start: 'function f() '.length, end: text.length })
+    const source = 'function f() {\n  return 1\n'
+    const issue = issueNamed(source, "Unclosed '{'")
+
+    expect(issue).toBeDefined()
+    expect(issue!.start).toBe('function f() '.length)
+    expect(issue!.end).toBe(source.length)
   })
 
   it('underlines an unclosed block comment through EOF', () => {
-    const text = 'a\n/* still open\nmore'
-    const doc = analyze(text)
-    const issue = doc.issues.find((i) => i.message === 'Unclosed block comment')
-    expect(issue?.start).toBe('a\n'.length)
-    expect(issue?.end).toBe(text.length)
+    const source = 'a\n/* still open\nmore'
+    const issue = issueNamed(source, 'Unclosed block comment')
+
+    expect(issue).toBeDefined()
+    expect(issue!.start).toBe('a\n'.length)
+    expect(issue!.end).toBe(source.length)
   })
 
   it('marks an unexpected closer on just that character', () => {
-    const doc = analyze('a)')
-    expect(doc.issues[0]).toMatchObject({
+    const issues = analyze('a)').issues
+
+    expect(issues[0]).toMatchObject({
       message: "Unexpected ')'",
       start: 1,
       end: 2,

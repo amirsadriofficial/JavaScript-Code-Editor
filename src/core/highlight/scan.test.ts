@@ -2,14 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { analyze, isCodeOffset } from '../document'
 import { isCodeInLine, scanLine, type ScanState } from './scan'
 
-const describeTokens = (text: string, entry: ScanState = 'code') =>
-  scanLine(text, entry).tokens.map((token) => `${token.kind}:${token.value}`)
+/** Readable token list for one line: `kind:value`. */
+function tokensOf(text: string, entry: ScanState = 'code') {
+  return scanLine(text, entry).tokens.map(
+    (token) => `${token.kind}:${token.value}`,
+  )
+}
 
-/** Flatten a whole document to `kind:value` for readable assertions. */
-const documentTokens = (text: string) =>
-  analyze(text).lines.flatMap((line) =>
+/** Same shape, but for the whole document. */
+function documentTokens(text: string) {
+  return analyze(text).lines.flatMap((line) =>
     line.tokens.map((token) => `${token.kind}:${token.value}`),
   )
+}
 
 describe('scanLine', () => {
   it('covers the line exactly once', () => {
@@ -17,47 +22,57 @@ describe('scanLine', () => {
     const { tokens } = scanLine(text, 'code')
 
     expect(tokens.map((t) => t.value).join('')).toBe(text)
-    tokens.forEach((token, i) => {
-      expect(token.start).toBe(i === 0 ? 0 : tokens[i - 1]!.end)
-    })
+
+    for (let i = 0; i < tokens.length; i++) {
+      const expectedStart = i === 0 ? 0 : tokens[i - 1]!.end
+      expect(tokens[i]!.start).toBe(expectedStart)
+    }
   })
 
   it('separates keywords from identifiers that merely contain them', () => {
-    expect(describeTokens('const x')).toEqual([
+    expect(tokensOf('const x')).toEqual([
       'keyword:const',
       'plain: ',
       'identifier:x',
     ])
-    expect(describeTokens('constant')).toEqual(['identifier:constant'])
+    expect(tokensOf('constant')).toEqual(['identifier:constant'])
   })
 
   it('classifies numbers, strings and comments', () => {
-    expect(describeTokens('0xff')).toEqual(['number:0xff'])
-    expect(describeTokens('1.5e3')).toEqual(['number:1.5e3'])
-    expect(describeTokens('1_000n')).toEqual(['number:1_000n'])
-    expect(describeTokens('"a\\"b"')).toEqual(['string:"a\\"b"'])
-    expect(describeTokens('// hi')).toEqual(['comment:// hi'])
-    expect(describeTokens('/* hi */')).toEqual(['comment:/* hi */'])
+    expect(tokensOf('0xff')).toEqual(['number:0xff'])
+    expect(tokensOf('1.5e3')).toEqual(['number:1.5e3'])
+    expect(tokensOf('1_000n')).toEqual(['number:1_000n'])
+    expect(tokensOf('"a\\"b"')).toEqual(['string:"a\\"b"'])
+    expect(tokensOf('// hi')).toEqual(['comment:// hi'])
+    expect(tokensOf('/* hi */')).toEqual(['comment:/* hi */'])
   })
 
   it('keeps an unterminated quote on its own line', () => {
     const scan = scanLine('const a = "oops', 'code')
-    expect(scan.tokens.at(-1)).toMatchObject({ kind: 'string', value: '"oops' })
+
+    expect(scan.tokens.at(-1)).toMatchObject({
+      kind: 'string',
+      value: '"oops',
+    })
     expect(scan.exit).toBe('code')
   })
 
   it('reports the state it leaves the line in', () => {
     expect(scanLine('/* open', 'code').exit).toBe('block-comment')
     expect(scanLine('const t = `open', 'code').exit).toBe('template')
-    expect(scanLine('still comment', 'block-comment').exit).toBe('block-comment')
+    expect(scanLine('still comment', 'block-comment').exit).toBe(
+      'block-comment',
+    )
     expect(scanLine('closes */ x', 'block-comment').exit).toBe('code')
     expect(scanLine('closes` + x', 'template').exit).toBe('code')
   })
 
   it('resumes a carried-over construct and records where it ended', () => {
-    const scan = scanLine('done */ const a = 1', 'block-comment')
+    const text = 'done */ const a = 1'
+    const scan = scanLine(text, 'block-comment')
+
     expect(scan.continuationEnd).toBe('done */'.length)
-    expect(describeTokens('done */ const a = 1', 'block-comment')).toEqual([
+    expect(tokensOf(text, 'block-comment')).toEqual([
       'comment:done */',
       'plain: ',
       'keyword:const',
@@ -77,7 +92,9 @@ describe('scanLine', () => {
 
 describe('whole-document scanning', () => {
   it('stops an unterminated quote at the end of its line', () => {
-    expect(documentTokens('const a = "oops\nconst b = 1')).toEqual([
+    const source = 'const a = "oops\nconst b = 1'
+
+    expect(documentTokens(source)).toEqual([
       'keyword:const',
       'plain: ',
       'identifier:a',
@@ -97,21 +114,27 @@ describe('whole-document scanning', () => {
 
   it('lets template literals span lines', () => {
     const lines = analyze('const t = `a\nb`;').lines
+
     expect(lines[0]!.exit).toBe('template')
-    expect(lines[1]!.tokens[0]).toMatchObject({ kind: 'string', value: 'b`' })
+    expect(lines[1]!.tokens[0]).toMatchObject({
+      kind: 'string',
+      value: 'b`',
+    })
   })
 
   it('lets block comments span lines', () => {
     const lines = analyze('/* a\nb */ const x = 1').lines
+
     expect(lines[0]!.exit).toBe('block-comment')
     expect(lines[1]!.tokens.some((t) => t.kind === 'keyword')).toBe(true)
   })
 })
 
 describe('incremental reuse', () => {
-  const source = Array.from({ length: 200 }, (_, i) => `const v${i} = ${i};`).join(
-    '\n',
-  )
+  const source = Array.from(
+    { length: 200 },
+    (_, i) => `const v${i} = ${i};`,
+  ).join('\n')
 
   it('keeps the scan objects for lines that did not change', () => {
     const before = analyze(source)
@@ -162,12 +185,14 @@ describe('incremental reuse', () => {
 describe('isCodeInLine', () => {
   it('rejects offsets inside strings and comments', () => {
     const line = scanLine('let a = "text" // trailing', 'code')
-    expect(isCodeInLine(line, 11)).toBe(false)
-    expect(isCodeInLine(line, 20)).toBe(false)
+
+    expect(isCodeInLine(line, 11)).toBe(false) // inside "text"
+    expect(isCodeInLine(line, 20)).toBe(false) // inside // comment
   })
 
   it('accepts offsets in code, including a literal boundary', () => {
     const line = scanLine('let a = "text" x', 'code')
+
     expect(isCodeInLine(line, 2)).toBe(true)
     expect(isCodeInLine(line, 8)).toBe(true)
     expect(isCodeInLine(line, 14)).toBe(true)
@@ -180,7 +205,9 @@ describe('isCodeInLine', () => {
 
   it('stays inside a multi-line template', () => {
     const doc = analyze('const t = `a\nmiddle\nb`;')
-    expect(isCodeOffset(doc, doc.text.indexOf('middle') + 3)).toBe(false)
+    const insideTemplate = doc.text.indexOf('middle') + 3
+
+    expect(isCodeOffset(doc, insideTemplate)).toBe(false)
     expect(isCodeOffset(doc, doc.text.length)).toBe(true)
   })
 

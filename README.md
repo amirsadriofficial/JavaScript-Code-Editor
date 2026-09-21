@@ -1,251 +1,141 @@
 # JavaScript Code Editor
 
-A browser code editor with live syntax highlighting and Copilot-style inline
-completions, built so that the editing primitive underneath it is replaceable.
+Browser code editor with live syntax highlighting and Copilot-style ghost
+completions. The editing widget underneath is replaceable — core logic never
+touches the DOM.
 
 ```bash
 pnpm install
-pnpm dev      # http://localhost:5173
-pnpm check    # types, lint, tests
+pnpm dev          # http://localhost:5173
+pnpm check        # types + lint + 112 unit tests
+pnpm test:browser # 47 Playwright checks (optional CHROME_PATH=…)
 ```
 
-## The design constraint
+Production deploy (Docker + host nginx): [`deploy/`](./deploy/README.md).
 
-The brief asked for one thing above the features: the application logic must
-not be entangled with whatever widget holds the text, so that widget can be
-swapped in under an hour.
+---
 
-That line is drawn at `src/core`. Nothing under it imports React or touches
-the DOM — it is a library of pure functions plus one class that owns undo
-history. It describes what it needs from a text widget in
-`core/primitive/types.ts` and never looks past that description:
+## Design constraint
+
+The brief required that application logic stay decoupled from the text widget,
+so the widget can be swapped in under an hour.
+
+That boundary is `src/core`: no React, no DOM — pure functions plus one class
+that owns undo. The only contract it needs is `TextPrimitiveProps`:
 
 ```ts
 export type TextPrimitiveProps = {
   value: string
-  selection: TextRange | null
-  elementRef: (element: HTMLElement | null) => void
+  selection: TextRange | null          // request after a core edit; otherwise null
+  elementRef: (el: HTMLElement | null) => void
   onChange: (change: PrimitiveChange) => void
   onSelectionChange: (selection: TextRange) => void
   onScroll: (position: { top: number; left: number }) => void
-  onKeyDown: (event: PrimitiveKeyEvent) => boolean
+  onKeyDown: (event: PrimitiveKeyEvent) => boolean  // true → preventDefault
 }
 ```
 
-`src/ui` is the only half that knows about a browser, and inside it exactly
-one file knows a `<textarea>` exists: `ui/primitives/TextareaPrimitive.tsx`.
+`src/ui` is the only browser half. Exactly one file knows a `<textarea>`
+exists: `ui/primitives/TextareaPrimitive.tsx`.
 
-### Swapping the primitive
+**To swap the primitive:** implement `TextPrimitiveProps`, then change the
+single element at the bottom of `ui/EditorShell.tsx`. Nothing else moves.
+Unit tests stay green — they never needed a DOM.
 
-1. Write a component satisfying `TextPrimitiveProps`.
-2. Change the one element rendered at the bottom of `ui/EditorShell.tsx`.
+---
 
-Nothing else moves. Highlighting, completion, history, indentation, linting
-and persistence are unaware of how text reaches them. The 106 tests all run
-against the core and need no DOM, so they keep passing across the swap — they
-are the proof that the seam is real rather than aspirational.
+## Layout
 
-Three things the replacement owes the shell:
-
-- `onKeyDown` must `preventDefault()` when the handler returns `true`.
-- `selection` is a *request*, not a binding. It is non-null only on the render
-  after a core-driven edit, so ordinary clicking and arrow keys are never
-  fought over.
-- `elementRef` must hand back the element the text is laid out in. The
-  overlays derive their geometry from its font metrics, so a primitive that
-  withholds it gets misplaced ghost text — which is why it is in the type
-  rather than an extra prop the shell hopes for.
-
-## Architecture
-
-```
+```text
 src/core/                         no DOM, no React
-  types.ts                        TextRange, Token, Suggestion, …
-  document.ts                     analyze(text, previous?) — the single analysis pass
-  model.ts                        EditorModel and its pure transitions
-  actions.ts                      what feeding an event to the core returns
-  editor-controller.ts            owns undo history, turns events into models
-  primitive/types.ts              the contract above
-  highlight/
-    scan.ts                       line-at-a-time tokenizer with carry state
-    walk.ts                       per-line tokens -> one code-only stream
-    keywords.ts
-  suggestions/
-    engine.ts                     candidate generation
-    rank.ts                       scoring
-    identifiers.ts                declarations and their scopes, from tokens
-    builtins.ts
-  edit/
-    keys.ts                       keyboard policy
-    autoclose.ts                  brackets and quotes
-    indent.ts                     Enter, Tab, Shift+Tab
-  history/stack.ts                undo/redo with run coalescing
-  lint/obvious.ts                 unbalanced brackets, unclosed literals
+  document.ts                     analyze() — one pass for everyone
+  model.ts                        EditorModel + pure transitions
+  editor-controller.ts            undo + event → model
+  primitive/types.ts              TextPrimitiveProps
+  highlight/scan.ts               line tokenizer + carry state
+  suggestions/                    engine, rank, identifiers, builtins
+  edit/                           keys, autoclose, indent
+  history/stack.ts                undo/redo with typing coalescing
+  lint/obvious.ts                 brackets + unclosed literals
   persist.ts
 
-src/ui/                           the only half that touches a browser
+src/ui/                           browser only
   EditorShell.tsx                 composition root
-  primitives/TextareaPrimitive.tsx   ← the swappable part
-  CodeLine.tsx  HighlightLayer.tsx  GhostText.tsx  LineNumbers.tsx  Toolbar.tsx
-  hooks/                          engine binding, metrics, scroll, viewport, …
+  primitives/TextareaPrimitive.tsx   ← swappable
+  CodeLine / HighlightLayer / GhostText / LineNumbers / Toolbar
+  hooks/                          engine, metrics, scroll, viewport, …
 ```
 
-### One analysis pass
+### How analysis works
 
-Highlighting, diagnostics and completion all need to know what the text
-*is*. Rather than each scanning it separately — and risking three different
-opinions about the same characters — `analyze()` runs once per change and
-produces the document every consumer reads.
+Highlighting, lint, and completion all read one `AnalyzedDocument` produced
+by `analyze()` per change. It lives on `EditorModel`, so text and tokens
+cannot drift.
 
-It is part of `EditorModel`, not a cache beside it, so tokens and text cannot
-drift apart.
+A line’s tokens depend only on its text and entry state (`code` |
+`block-comment` | `template`). `analyze(text, previous)` reuses every
+unchanged line — a keystroke in a 2,000-line file re-scans **1 line**.
 
-### Incremental re-analysis
+`CodeLine` is memoised on that scan object; only the visible window (+ overscan)
+is in the DOM.
 
-A line's tokens depend only on its own text and the state it starts in. Only
-block comments and template literals carry across a newline, so that state is
-one of three values.
+Ghost text position is arithmetic (monospace, no wrap): line × height +
+column × advance. The browser suite measures **0.02px** error.
 
-`analyze(text, previous)` therefore reuses the scan of every line an edit
-didn't touch: the lines above the caret are untouched, and the lines below
-match again as soon as the carry state re-converges. A keystroke in a
-2,000-line file re-scans **1 line out of 2,000**.
-
-The view is paired to this. `CodeLine` is memoised on the scan object, so
-React re-renders the one line that changed, and only the visible window plus
-an overscan margin is in the DOM at all.
-
-### Where the caret is
-
-Ghost text has to land exactly where the caret is. Because the text is
-monospace and never wraps, that is arithmetic — line index times line height,
-visual column times character advance — not measurement. The character
-advance is read once from a hidden probe, and again when web fonts finish
-loading. The browser test asserts the ghost sits within 1.5px of where the
-textarea puts the same characters; it measures **0.02px**.
+---
 
 ## Features
 
-### Syntax highlighting
+| Area | Behaviour |
+|------|-----------|
+| Highlighting | Keywords, strings, templates, comments, numbers, identifiers. Unterminated `'`/`"` stop at end of line. |
+| Completions | Ghost text; `Tab` accept, `Esc` dismiss, `Alt+]`/`Alt+[` cycle. Keywords, builtins, user identifiers (incl. destructuring + arrow params). Prefix-only — never fuzzy. After `.` → members only. Silent in strings/comments. |
+| Scope | Token-based. `let`/`const` die with their brace block; `var`/`function`/`class` stay file-wide. |
+| Editing | Auto-close pairs, wrap selection, skip existing closer, smart quotes (`don't` is fine). Enter keeps indent; `{` adds a level. Block Tab / Shift+Tab. |
+| Undo | Fast typing coalesces. Paste, accept, Enter, autoclose each get their own step. |
+| Polish | Themes, line numbers, current line, status bar, squiggly underlines on issues, localStorage restore (text, caret, scroll, theme, history). |
 
-Keywords, strings, template literals, comments, numbers, identifiers and
-punctuation, updated as you type. An unterminated `'` or `"` stops at the end
-of its line rather than recolouring the rest of the file.
-
-### Inline completions
-
-Ghost text after the caret, accepted with `Tab`.
-
-Candidates come from JavaScript keywords, common built-ins and identifiers
-you declared — `const`/`let`/`var`, destructuring patterns, functions,
-classes, and both `function` and arrow parameters.
-
-Ghost text can only ever *append* to what you typed, so the engine only
-offers candidates that extend it. Fuzzy and substring matches are deliberately
-rejected: rendered at the caret they read as duplicated characters.
-
-After a `.` only members are offered, and they replace only the text past the
-dot — `arr.ma` + `Tab` gives `arr.map`, not `map`. Namespaced globals match on
-the whole path instead, so `Math.ra` completes to `Math.random`.
-
-Ranking prefers exact-case prefixes, then shorter completions, then locally
-declared names, then recently accepted ones. Completion stays silent inside
-strings and comments, including at the end of one that never closed.
-
-### Scope awareness
-
-Declarations are read from the token stream, so `// const secret = 1` never
-becomes a suggestion. Bindings are bounded by brace nesting: a `let` from a
-block that already closed is not offered, while `var`, `function` and `class`
-stay visible for the whole file, as hoisting implies.
-
-### Editing
-
-| Key | Behaviour |
-| --- | --- |
-| `Tab` | accept the suggestion; otherwise indent |
-| `Esc` | dismiss the suggestion |
-| `Alt+]` / `Alt+[` | cycle candidates |
-| `Enter` | keep indentation, add a level after `{`, drop the closer onto its own line |
-| `Tab` / `Shift+Tab` on a selection | indent / outdent every line it touches |
-| `Ctrl/Cmd+Z`, `Ctrl/Cmd+Shift+Z` | undo, redo |
-
-Brackets and quotes auto-close, wrap a selection, and skip over a closer that
-is already there. Quotes stay out of the way inside words, so `don't` types
-normally. Backspace between an empty pair removes both halves.
-
-A run of fast typing collapses into one undo step. A paste, an accepted
-completion, `Enter` and an auto-closed bracket each get their own step, and a
-structural edit is a boundary on both sides of the run.
-
-### Also
-
-Light and dark themes, line numbers, current-line highlight, a cursor
-position readout, and warnings for unbalanced brackets and unclosed literals.
-Text, caret, scroll position, theme and undo history are restored on reload;
-stored history is capped, and over quota the text is kept in preference to it.
+---
 
 ## Performance
 
-Measured on a 2,000-line / 49 KB document. The core numbers are printed by
-`pnpm test`, which also asserts them as budgets; the keystroke and DOM
-numbers come from a Playwright run against the production build.
+Measured on a **2,000-line / 49 KB** document.
 
-| | |
-| --- | --- |
-| Core work per keystroke | **1.8 ms** (5.2 ms without reuse) |
-| Line scans recomputed per keystroke | **1** of 2,000 |
-| Keystroke to next frame | **8.2 ms** median, 20.8 ms worst |
-| Highlighted lines in the DOM | **49** of 2,000 |
+| Metric | Value |
+|--------|-------|
+| Core work / keystroke | **~1.8 ms** (≈5 ms without reuse) |
+| Lines re-scanned / keystroke | **1** of 2,000 |
+| Keystroke → next frame | **~8–11 ms** median |
+| Highlighted lines in DOM | **49** of 2,000 |
+| Analyze 10,000-line paste | **~22 ms** |
 
-It started at 32 ms per keystroke, which is two dropped frames. Three things
-closed the gap:
+What got it there: incremental scanning, windowed rendering, and an
+uncontrolled textarea (DOM already has the right text on ordinary typing;
+the model writes back only after core-driven edits).
 
-- **Incremental scanning**, above.
-- **Windowed rendering**, so markup exists only for what is on screen.
-- **An uncontrolled primitive.** The model is still the source of truth, but
-  for ordinary typing the DOM already holds the right text. Writing it back
-  handed the browser a fresh copy of the whole buffer on every keystroke;
-  text is now pushed down only when the core changed it.
+Budgets are asserted in `src/core/document.bench.test.ts`.
 
-Pasting 10,000 lines analyses in ~22 ms. Scroll sync is written to the DOM
-inside the scroll handler, which runs before paint, so the overlay never lags
-a frame behind the text.
+---
 
 ## Tests
 
-```bash
-pnpm check         # types + lint + 108 unit tests
-pnpm test:browser  # builds, serves, runs 46 Playwright checks
-```
+| Command | What |
+|---------|------|
+| `pnpm check` | `tsc` + ESLint + **112** Vitest tests under `src/core` (no DOM) |
+| `pnpm test:browser` | Build + serve + **47** Playwright checks in `e2e/browser.mjs` |
 
-The unit suite lives entirely under `src/core` and needs no DOM. It covers
-the behaviours that are easy to get subtly wrong: that a coalesced typing
-run undoes to the start of the run and not one character back; that every
-candidate extends the typed prefix; that an unterminated quote does not
-escape its line; that `Enter` before `}` doesn't eat the blank lines below
-it; that indent and outdent round-trip; that incremental analysis gives
-bit-identical results to analysing from scratch; that destructuring binds
-the renamed half, not the key.
+Unit tests focus on easy-to-break behaviour: coalesced undo, ghost prefix
+invariants, quote/line boundaries, indent round-trips, incremental ≡ scratch,
+destructuring bind names.
 
-`src/core/document.bench.test.ts` asserts the performance budgets, so a
-regression fails the suite rather than being noticed later.
+Browser tests cover alignment, native caret/selection, clipboard paste,
+persistence, windowing, and latency on a large file.
 
-`pnpm test:browser` (`e2e/browser.mjs`) covers what the unit tests cannot
-see: ghost-text pixel alignment, native caret and selection, real clipboard
-pastes, reload persistence, windowed rendering, and keystroke-to-frame
-latency on a 2,000-line document. Set `CHROME_PATH` if Playwright should
-use a system Chrome instead of its own download.
+---
 
 ## Known limitations
 
-- The tokenizer is regex and state driven, not a parser. `${…}` inside a
-  template literal is highlighted as part of the string, and a regex literal
-  is read as division.
-- Scopes are approximated by brace nesting. Parameters of an arrow function
-  with an expression body fall back to the enclosing scope, since there is no
-  block to bound them.
-- Undo stores whole-buffer snapshots. Simple and exact, but memory grows with
-  document size, which is why both the in-memory stack and the persisted copy
-  are capped.
-- Non-ASCII identifiers tokenize as individual plain characters.
+- Tokenizer is regex + state, not a parser — `` `${…}` `` stays string-coloured; regex literals look like division.
+- Scope ≈ brace nesting; expression-bodied arrow params fall back to the enclosing scope.
+- Undo stores whole-buffer snapshots (capped in memory and in `localStorage`).
+- Non-ASCII identifiers tokenize as plain characters.
